@@ -1,3 +1,6 @@
+// Julien BAYLE, 2025
+// https://github.com/julienbayle/apps_script_doc_generator/edit/main/code.js
+
 // Documentation Google Apps Script
 //https://developers.google.com/apps-script/reference/document/body
 
@@ -19,7 +22,7 @@ function countPlaceholders(docId) {
     const matches = bodyText.match(placeholderPattern);
     
     if (matches && matches.length > 0) {
-      matchesCount =+ matches.length;
+      matchesCount += matches.length;
     }
 
     // Vérifier la présence de placeholders sous forme £
@@ -27,7 +30,7 @@ function countPlaceholders(docId) {
     const blockMatches = bodyText.match(blockPlaceholderPattern);
     
     if (blockMatches && blockMatches.length > 0) {
-      blockMatchesCount =+ blockMatches.length;
+      blockMatchesCount += blockMatches.length;
     }
     
   }
@@ -224,7 +227,7 @@ function generateDocsAndPDFs() {
     let remainingPlaceholders = countPlaceholders(doc.getId())
 
     if (remainingPlaceholders > 0) {
-      logState(sheet, data, `${doc.getName()} : Erreur : ${remainingPlaceholders} placeholders non remplacés subsistent dans le document`);
+      logState(sheet, data, `${doc.getName()} : Erreur : ${remainingPlaceholders} placeholders restants`);
     } 
     else {
       // PDF export
