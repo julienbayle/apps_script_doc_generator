@@ -5,11 +5,8 @@
 //https://developers.google.com/apps-script/reference/document/body
 
 // Counts placeholders {{xxx}}, £IF, £FIN, £OK, £KO in all tabs
-function countPlaceholders(docId) {
+function countPlaceholders(tabs) {
 
-  const docFile = DocumentApp.openById(docId);
-
-  let tabs = docFile.getTabs();
   let matchesCount = 0
   let blockMatchesCount = 0
 
@@ -116,39 +113,99 @@ function evaluateNotEqualConditions(tabs, values) {
     }
 }
 
-// Transform blocs £OKxxx£FIN in xxx
-function cleanOKBocks(body) {
-  let startElement = body.findText('£OK');
+function cleanEvaluatedBocksInTables(body) {
+  const tables = body.getTables();
 
-  while (startElement) {
-    const endElement = body.findText('£FIN', startElement);
-    if (endElement) {
-      const startIndex = startElement.getStartOffset();
-      const endIndex = endElement.getStartOffset();
-      startElement.getElement().asText().deleteText(startIndex, startIndex+2);
-      endElement.getElement().asText().deleteText(endIndex, endIndex+3);
+  for (let tableIndex = 0; tableIndex < tables.length; tableIndex++) {
+    const table = tables[tableIndex];
+    const rowCount = table.getNumRows();
+
+    Logger.log(`1 table ${tableIndex + 1} with ${rowCount} rows`);
+
+    for (let rowIndex = 0; rowIndex < rowCount; rowIndex++) {
+      const row = table.getRow(rowIndex);
+      const cellCount = row.getNumCells();
+
+      for (let cellIndex = 0; cellIndex < cellCount; cellIndex++) {
+        const cell = row.getCell(cellIndex);
+        let cellElementCount = cell.getNumChildren();
+
+        let removeNext = false;
+        for (let cellChildrenIndex = 0; cellChildrenIndex < cellElementCount; cellChildrenIndex++) {
+          let paragraph = cell.getChild(cellChildrenIndex)
+
+          if (paragraph.findText("£FIN")) {
+            Logger.log(`remove ${paragraph.getText()}`);
+            cell.removeChild(paragraph)
+            cellChildrenIndex--
+            cellElementCount--
+            removeNext = false
+          }
+
+          if (paragraph.findText("£OK")) {
+            Logger.log(`remove ${paragraph.getText()}`);
+            cell.removeChild(paragraph)
+            cellChildrenIndex--
+            cellElementCount--
+            removeNext = false
+          }
+
+          if (removeNext) {
+            Logger.log(`remove ${paragraph.getText()}`);
+            cell.removeChild(paragraph)
+            cellChildrenIndex--
+            cellElementCount--
+          }
+          
+          if (paragraph.findText("£KO")) {
+            Logger.log(`remove ${paragraph.getText()}`);
+            cell.removeChild(paragraph)
+            cellChildrenIndex--
+            cellElementCount--
+            removeNext = true
+          }
+        }
+      }
     }
-    else {
-       Logger.log(`Erreur = £OK sans bloc £FIN correspondant`);
-    }
-    startElement = body.findText('£OK', startElement);
   }
 }
 
-// Remove blocs £KOxxx£FIN
-// Only way found to fix multiple lines is to use the batch API
-function removeKOBocks(text, docId) {
-  const r = new RegExp('£KO[^£]*£FIN', "g");
-  const matches = text.match(r);
-  if (!matches || matches.length == 0) {
-    return;
-  }
-  else {
-    const requests = matches.map(text => ({ replaceAllText: { containsText: { matchCase: false, text }, replaceText: "" } }));
-    Docs.Documents.batchUpdate({ requests }, docId);
-  }
+// Transform blocs £OKxxx£FIN in "xxx"
+// Transform blocs £K0xxx£FIN in ""
+function cleanEvaluatedBocks(body) {
 
+  let paragraphs = body.getParagraphs();
+  Logger.log(`${paragraphs.length} paragraphes`);
+
+  let removeNext = false;
+
+  for (const paragraph of paragraphs) {
+  
+    if (paragraph.findText("£FIN")) {
+      Logger.log(`remove ${paragraph.getText()}`);
+      body.removeChild(paragraph)
+      removeNext = false
+    }
+
+    if (paragraph.findText("£OK")) {
+      Logger.log(`remove ${paragraph.getText()}`);
+      body.removeChild(paragraph)
+      removeNext = false
+    }
+
+    if (removeNext) {
+      Logger.log(`remove ${paragraph.getText()}`);
+      body.removeChild(paragraph)
+    }
+    
+    if (paragraph.findText("£KO")) {
+      Logger.log(`remove ${paragraph.getText()}`);
+      body.removeChild(paragraph)
+      removeNext = true
+    }
+  }
 }
+
 
 function logState(sheet, data, message) {
   Logger.log(message);
@@ -189,7 +246,7 @@ function generateDocsAndPDFs() {
     Logger.log(`Traitement de la ligne ${i}: ${JSON.stringify(values)}`);
 
     // Create a new Google Docs
-    const doc = DriveApp.getFileById(templateId).makeCopy(`Courrier-${values.nom}`, folder);
+    const doc = DriveApp.getFileById(templateId).makeCopy(`Courrier-${values.INITIALES}`, folder);
     const docFile = DocumentApp.openById(doc.getId());
     
     let tabs = docFile.getTabs();
@@ -198,33 +255,44 @@ function generateDocsAndPDFs() {
     evaluateEqualConditions(tabs, values);
     evaluateNotEqualConditions(tabs, values);
 
-    fulltext = ""
     for (const tab of tabs) {
 
       let body = tab.asDocumentTab().getBody()
     
-      cleanOKBocks(body);
+      cleanEvaluatedBocksInTables(body)
+      cleanEvaluatedBocks(body)
 
-      // Replace {{COLUMN_NAME blocs}} if COLUMN_NAME exists
+      // Replace {{COLUMN_NAME blocs}}% if COLUMN_NAME exists
       for (const key in values) {
-        if (values[key]) {
-            const placeholder = `{{${key}}}`;
-            body.replaceText(placeholder, values[key]);
+        if (values[key] || values[key] === 0) {
+            const placeholder = `{{${key}}}%`;
+            let val_percent = Math.round(100*parseFloat(values[key])).toString()
+            body.replaceText(placeholder, `${val_percent}%`);
         }
       }
 
-      // Used next to clear KO blocs
-      fulltext += body.asText().getText();
+      // Replace {{COLUMN_NAME blocs}} if COLUMN_NAME exists
+      for (const key in values) {
+        if (values[key] || values[key] === 0) {
+            const placeholder = `{{${key}}}`;
+            
+            if (key.includes("DATE")) {
+                const options = { day: '2-digit', month: '2-digit', year: 'numeric' };
+                let formattedDate = new Intl.DateTimeFormat('fr-FR', options).format(values[key]);
+                body.replaceText(placeholder, formattedDate);
+            }
+            else {
+                body.replaceText(placeholder, values[key]);
+            }
+        }
+      }
     }
+
+    // Check all placeholders were replaced
+    let remainingPlaceholders = countPlaceholders(tabs)
 
     // Close generated doc
     docFile.saveAndClose();
-
-    // Request KO cleanup
-    removeKOBocks(fulltext, doc.getId());
-
-    // Check all placeholders were replaced
-    let remainingPlaceholders = countPlaceholders(doc.getId())
 
     if (remainingPlaceholders > 0) {
       logState(sheet, data, `${doc.getName()} : Erreur : ${remainingPlaceholders} placeholders restants`);
@@ -232,9 +300,19 @@ function generateDocsAndPDFs() {
     else {
       // PDF export
       const pdf = DriveApp.getFileById(doc.getId()).getAs('application/pdf');
-      folder.createFile(pdf).setName(`Courrier-${values.nom}`);
+      folder.createFile(pdf).setName(`Courrier-${values.INITIALES}`);
       logState(sheet, data, `${doc.getName()} : OK : Document ${pdf.getName()} généré avec succès`);
     } 
   }
 }
 
+
+function test() {
+    const docFile = DocumentApp.openById("1ixNZME6mAHlYFoXdJy9jrHxkUnRm4UpZFKVWaIxkwmQ");
+    let tabs = docFile.getTabs();
+    for (const tab of tabs) {
+      let body = tab.asDocumentTab().getBody()
+      cleanEvaluatedBocksInTables(body)
+      cleanEvaluatedBocks(body);
+    }
+}
